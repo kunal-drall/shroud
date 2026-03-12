@@ -1,0 +1,24 @@
+{
+  "name": "shroud-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "test": "turbo test",
+    "dev": "turbo dev",
+    "circuit:compile": "cd packages/circuits && bash scripts/compile.sh",
+    "circuit:test": "cd packages/circuits && node test/membership.test.js",
+    "contracts:test": "cd packages/contracts && forge test -vv",
+    "contracts:gas": "cd packages/contracts && forge test --gas-report",
+    "frontend:dev": "cd packages/frontend && npm run dev"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
