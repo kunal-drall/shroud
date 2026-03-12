@@ -1,0 +1,41 @@
+# Hackathon docs (keep locally, exclude from git)
+*.docx
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Circuit build artifacts
+packages/circuits/build/*.ptau
+packages/circuits/build/*.r1cs
+packages/circuits/build/*.zkey
+packages/circuits/build/*_0.zkey
+packages/circuits/build/*.sym
+packages/circuits/build/membership_js/
+packages/circuits/node_modules/
+
+# Foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+packages/contracts/lib/
+
+# Node
+node_modules/
+packages/*/node_modules/
+.next/
+packages/frontend/.next/
+
+# Rust/WASM
+packages/crypto-lib/target/
+packages/frontend/lib/wasm/
+
+# Turbo
+.turbo/
+
+# Misc
+.DS_Store
+*.log
+dist/
+.vercel
