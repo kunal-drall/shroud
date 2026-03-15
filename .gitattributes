@@ -1,0 +1,2 @@
+packages/frontend/public/circuits/*.wasm filter=lfs diff=lfs merge=lfs -text
+packages/frontend/public/circuits/*.zkey filter=lfs diff=lfs merge=lfs -text
