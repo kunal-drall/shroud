@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contracts:
+    name: Foundry Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Node (for ffi scripts)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install snarkjs and circomlibjs
+        run: npm install -g snarkjs && npm install circomlibjs
+        working-directory: packages/contracts
+
+      - name: Run Foundry tests
+        run: forge test -vvv
+        working-directory: packages/contracts
+
+  frontend:
+    name: Next.js Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: packages/frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: packages/frontend
