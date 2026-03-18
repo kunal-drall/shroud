@@ -18,7 +18,6 @@ packages/circuits/node_modules/
 # Foundry
 packages/contracts/out/
 packages/contracts/cache/
-packages/contracts/broadcast/
 packages/contracts/lib/
 
 # Node
