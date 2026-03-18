@@ -3,10 +3,10 @@
 
 // Deployed on Arbitrum Sepolia (chainId 421614) — block ~10491459
 export const DEPLOYED_ADDRESSES = {
-  identityRegistry: '0x0000000000000000000000000000000000000000' as `0x${string}`,
-  membershipVerifier: '0x0000000000000000000000000000000000000000' as `0x${string}`,
-  frostVerifier: '0x0000000000000000000000000000000000000000' as `0x${string}`,
-  demoCircle: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+  identityRegistry:   '0x7306921da48Aac4e13Ec349d3ba085Cd21A58a75' as `0x${string}`,
+  membershipVerifier: '0xEfeE9c9339Fb9881F70bCCE8e8246aCb2Ed0E8C9' as `0x${string}`,
+  frostVerifier:      '0x7217a46757cCbc9D3eCAfBC37ABa94078aa75571' as `0x${string}`,
+  demoCircle:         '0xfBb1AF442BB8E17EE2017BF2D83FC9783D55c798' as `0x${string}`,
 } as const;
 
 export const IDENTITY_REGISTRY_ABI = [
