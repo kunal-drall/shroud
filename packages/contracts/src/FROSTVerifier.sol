@@ -44,8 +44,10 @@ contract FROSTVerifier is IFROSTVerifier {
         // Input validation
         if (sigR == 0 || sigS == 0) return false;
         if (sigR >= N || sigS >= N) return false;
+        // Enforce low-s (EIP-2) to prevent signature malleability.
         // For every valid (r, s), the pair (r, N-s) is also valid under raw ecrecover.
         // Rejecting s > N/2 ensures each signature has a unique canonical form.
+        if (sigS > N / 2) return false;
 
         // --- Hackathon note ---
         // Production: full Schnorr verification via ecrecover trick:
