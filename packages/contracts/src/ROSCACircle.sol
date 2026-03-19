@@ -34,6 +34,7 @@ contract ROSCACircle is ReentrancyGuard {
     bytes32[] public memberList;
     mapping(uint256 => mapping(bytes32 => bool)) public contributed;
     mapping(uint256 => uint256) public roundContribCount;
+    mapping(bytes32 => bool) public hasClaimed;
 
     // ── Events ───────────────────────────────────────────────────────────────
     event MemberJoined(bytes32 indexed pseudonym, uint256 joinedCount);
@@ -56,6 +57,7 @@ contract ROSCACircle is ReentrancyGuard {
     error AlreadyContributed();
     error AlreadyClaimed();
     error RoundNotComplete();
+    error PayoutNotClaimed();
     error TransferFailed();
 
     constructor(
@@ -155,6 +157,7 @@ contract ROSCACircle is ReentrancyGuard {
         if (roundContribCount[currentRound] < memberCount) revert RoundNotComplete();
 
         bytes32 pseudonym = memberList[currentRound - 1];
+        if (hasClaimed[pseudonym]) revert AlreadyClaimed();
 
         uint256 payoutAmount = contributionAmount * memberCount;
         bytes32 msgHash = keccak256(abi.encodePacked(
@@ -168,6 +171,7 @@ contract ROSCACircle is ReentrancyGuard {
             revert InvalidProof();
         }
 
+        hasClaimed[pseudonym] = true;
         (bool sent, ) = _recipient.call{value: payoutAmount}("");
         if (!sent) revert TransferFailed();
 
@@ -186,6 +190,7 @@ contract ROSCACircle is ReentrancyGuard {
 
         if (!contributionsFull && !deadlinePassed) revert RoundNotComplete();
         // When fully funded, require the payout to be disbursed before advancing.
+        if (contributionsFull && !hasClaimed[memberList[currentRound - 1]]) revert PayoutNotClaimed();
 
         if (currentRound >= totalRounds) {
             state = State.COMPLETED;
