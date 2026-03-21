@@ -20,14 +20,13 @@ export function WalletConnect() {
     return <button className="btn-ghost text-xs" disabled>Connect Wallet</button>;
   }
 
+  const isWrongChain = chain?.id !== arbitrumSepolia.id;
+
   if (!isConnected) {
     return (
       <button
         className="btn-ghost text-xs"
-        onClick={() => {
-          const mm = connectors.find(c => c.name === 'MetaMask') ?? connectors[0];
-          if (mm) connect({ connector: mm });
-        }}
+        onClick={() => connect({ connector: connectors[0] })}
       >
         Connect Wallet
       </button>
