@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
+import { useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from 'wagmi';
 import { Nav } from '@/components/Nav';
 import {
   generateMasterKey,
@@ -16,6 +16,7 @@ type Step = 'idle' | 'generating' | 'generated' | 'registering' | 'done';
 
 export default function RegisterPage() {
   const { isConnected } = useAccount();
+  const publicClient = usePublicClient();
 
   const [step, setStep]         = useState<Step>('idle');
   const [msk, setMsk]           = useState<bigint | null>(null);
@@ -69,11 +70,18 @@ export default function RegisterPage() {
     setError(null);
     setStep('registering');
     try {
+      // Fetch live fees and apply 2x buffer — MetaMask's default estimate
+      // can sit right at the base fee, causing rejection if it ticks up slightly.
+      const fees = publicClient ? await publicClient.estimateFeesPerGas() : null;
       await writeContractAsync({
         address: DEPLOYED_ADDRESSES.identityRegistry,
         abi: IDENTITY_REGISTRY_ABI,
         functionName: 'register',
         args: [toBytes32(commitment)],
+        ...(fees && {
+          maxFeePerGas: fees.maxFeePerGas * 2n,
+          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        }),
       });
     } catch (e: any) {
       setError((e as Error).message ?? 'Transaction rejected');
