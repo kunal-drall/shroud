@@ -13,7 +13,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }));
 
   return (
-    <WagmiProvider config={config}>
+    // reconnectOnMount lets wagmi restore an existing MetaMask session on page reload
+    <WagmiProvider config={config} reconnectOnMount>
       <QueryClientProvider client={queryClient}>
         {children}
       </QueryClientProvider>

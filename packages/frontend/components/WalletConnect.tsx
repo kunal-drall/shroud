@@ -1,6 +1,7 @@
 'use client';
 
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
+import { useEffect, useState } from 'react';
 import { arbitrumSepolia } from '@/lib/wagmi';
 import { truncateHex } from '@/lib/crypto';
 
@@ -9,14 +10,19 @@ export function WalletConnect() {
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const [mounted, setMounted] = useState(false);
 
-  const isWrongChain = isConnected && chain?.id !== arbitrumSepolia.id;
+  useEffect(() => { setMounted(true); }, []);
 
-  if (!isConnected) {
+  // Avoid hydration mismatch: always render the button until client-side state is ready
+  if (!mounted || !isConnected) {
     return (
       <button
         className="btn-ghost text-xs"
-        onClick={() => connect({ connector: connectors[0] })}
+        onClick={() => {
+          const metaMaskConnector = connectors.find(c => c.name === 'MetaMask') ?? connectors[0];
+          connect({ connector: metaMaskConnector });
+        }}
       >
         Connect Wallet
       </button>
