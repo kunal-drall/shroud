@@ -1,11 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
 import { Nav } from '@/components/Nav';
 import {
   generateMasterKey,
-  computeCommitment,
   saveMskLocally,
   loadMskLocally,
   toBytes32,
@@ -18,18 +17,38 @@ type Step = 'idle' | 'generating' | 'generated' | 'registering' | 'done';
 export default function RegisterPage() {
   const { isConnected } = useAccount();
 
-  const [step, setStep]           = useState<Step>('idle');
-  const [msk, setMsk]             = useState<bigint | null>(null);
-  const [commitment, setCommit]   = useState<bigint | null>(null);
-  const [leafIndex, setLeafIndex] = useState<number | null>(null);
-  const [error, setError]         = useState<string | null>(null);
-  const [showMsk, setShowMsk]     = useState(false);
+  const [step, setStep]         = useState<Step>('idle');
+  const [msk, setMsk]           = useState<bigint | null>(null);
+  const [commitment, setCommit] = useState<bigint | null>(null);
+  const [error, setError]       = useState<string | null>(null);
+  const [showMsk, setShowMsk]   = useState(false);
 
-  const { writeContract, data: txHash } = useWriteContract();
+  const {
+    writeContractAsync,
+    data: txHash,
+    error: writeError,
+  } = useWriteContract();
+
   const { isLoading: isMining, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
   // Load existing key on mount
   const existing = typeof window !== 'undefined' ? loadMskLocally() : null;
+
+  // Advance to 'done' once the tx confirms — must be in useEffect, not render body
+  useEffect(() => {
+    if (isSuccess && step === 'registering') {
+      if (msk !== null) saveMskLocally(msk, 0);
+      setStep('done');
+    }
+  }, [isSuccess, step, msk]);
+
+  // Surface contract write errors
+  useEffect(() => {
+    if (writeError && step === 'registering') {
+      setError(writeError.message ?? 'Transaction failed');
+      setStep('generated');
+    }
+  }, [writeError, step]);
 
   const handleGenerate = async () => {
     setError(null);
@@ -50,25 +69,17 @@ export default function RegisterPage() {
     setError(null);
     setStep('registering');
     try {
-      writeContract({
+      await writeContractAsync({
         address: DEPLOYED_ADDRESSES.identityRegistry,
         abi: IDENTITY_REGISTRY_ABI,
         functionName: 'register',
         args: [toBytes32(commitment)],
       });
     } catch (e: any) {
-      setError(e.message);
+      setError((e as Error).message ?? 'Transaction rejected');
       setStep('generated');
     }
   };
-
-  // Watch for tx success
-  if (isSuccess && step === 'registering') {
-    if (msk !== null) {
-      saveMskLocally(msk, 0); // leaf index 0 placeholder; update from event
-    }
-    setStep('done');
-  }
 
   return (
     <div className="min-h-screen flex flex-col">
