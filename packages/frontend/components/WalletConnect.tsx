@@ -14,14 +14,19 @@ export function WalletConnect() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  // Avoid hydration mismatch: always render the button until client-side state is ready
-  if (!mounted || !isConnected) {
+  // Before hydration: render a static placeholder that matches the server HTML.
+  // This prevents the hydration mismatch without blocking the connect click.
+  if (!mounted) {
+    return <button className="btn-ghost text-xs" disabled>Connect Wallet</button>;
+  }
+
+  if (!isConnected) {
     return (
       <button
         className="btn-ghost text-xs"
         onClick={() => {
-          const metaMaskConnector = connectors.find(c => c.name === 'MetaMask') ?? connectors[0];
-          connect({ connector: metaMaskConnector });
+          const mm = connectors.find(c => c.name === 'MetaMask') ?? connectors[0];
+          if (mm) connect({ connector: mm });
         }}
       >
         Connect Wallet

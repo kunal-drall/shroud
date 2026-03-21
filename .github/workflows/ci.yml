@@ -23,6 +23,10 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install Foundry dependencies
+        run: forge install
+        working-directory: packages/contracts
+
       - name: Install snarkjs and circomlibjs
         run: npm install -g snarkjs && npm install circomlibjs
         working-directory: packages/contracts
