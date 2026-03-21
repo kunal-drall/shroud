@@ -38,3 +38,6 @@ packages/frontend/lib/wasm/
 *.log
 dist/
 .vercel
+
+# Vercel local config
+.vercel
