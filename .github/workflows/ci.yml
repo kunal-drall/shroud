@@ -24,7 +24,9 @@ jobs:
           node-version: 20
 
       - name: Install Foundry dependencies
-        run: forge install
+        run: |
+          forge install foundry-rs/forge-std --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts --no-commit
         working-directory: packages/contracts
 
       - name: Install snarkjs and circomlibjs

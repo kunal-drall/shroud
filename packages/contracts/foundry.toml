@@ -9,7 +9,6 @@ via_ir = false
 ffi = true
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
-    "poseidon/=lib/contracts/contracts/lib/",
 ]
 
 [rpc_endpoints]
