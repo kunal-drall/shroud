@@ -70,18 +70,17 @@ export default function RegisterPage() {
     setError(null);
     setStep('registering');
     try {
-      // Fetch live fees and apply 2x buffer — MetaMask's default estimate
-      // can sit right at the base fee, causing rejection if it ticks up slightly.
-      const fees = publicClient ? await publicClient.estimateFeesPerGas() : null;
+      // Use eth_gasPrice (more reliable on Arbitrum than estimateFeesPerGas which can
+      // return stale EIP-1559 data) and apply 3× buffer + 100 Mwei floor.
+      const MIN_GAS = 100_000_000n; // 100 Mwei — always above Arbitrum Sepolia base fee
+      const raw = publicClient ? await publicClient.getGasPrice() : MIN_GAS;
+      const gasPrice = (raw * 3n) < MIN_GAS ? MIN_GAS : raw * 3n;
       await writeContractAsync({
         address: DEPLOYED_ADDRESSES.identityRegistry,
         abi: IDENTITY_REGISTRY_ABI,
         functionName: 'register',
         args: [toBytes32(commitment)],
-        ...(fees && {
-          maxFeePerGas: fees.maxFeePerGas * 2n,
-          maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        }),
+        gasPrice,
       });
     } catch (e: any) {
       setError((e as Error).message ?? 'Transaction rejected');
