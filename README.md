@@ -1,5 +1,7 @@
 # Shroud Protocol
 
+> **Live demo:** https://shroud-two.vercel.app
+
 **Private savings circles on Arbitrum Sepolia.**
 
 Anonymous membership via ZK proofs. Threshold custody via FROST signatures.
