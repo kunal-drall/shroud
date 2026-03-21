@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from 'wagmi';
+import { useWaitForTransactionReceipt, useAccount, useWalletClient } from 'wagmi';
+import { encodeFunctionData } from 'viem';
 import { Nav } from '@/components/Nav';
 import {
   generateMasterKey,
@@ -16,19 +17,14 @@ type Step = 'idle' | 'generating' | 'generated' | 'registering' | 'done';
 
 export default function RegisterPage() {
   const { isConnected } = useAccount();
-  const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
 
   const [step, setStep]         = useState<Step>('idle');
   const [msk, setMsk]           = useState<bigint | null>(null);
   const [commitment, setCommit] = useState<bigint | null>(null);
+  const [txHash, setTxHash]     = useState<`0x${string}` | undefined>(undefined);
   const [error, setError]       = useState<string | null>(null);
   const [showMsk, setShowMsk]   = useState(false);
-
-  const {
-    writeContractAsync,
-    data: txHash,
-    error: writeError,
-  } = useWriteContract();
 
   const { isLoading: isMining, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -42,14 +38,6 @@ export default function RegisterPage() {
       setStep('done');
     }
   }, [isSuccess, step, msk]);
-
-  // Surface contract write errors
-  useEffect(() => {
-    if (writeError && step === 'registering') {
-      setError(writeError.message ?? 'Transaction failed');
-      setStep('generated');
-    }
-  }, [writeError, step]);
 
   const handleGenerate = async () => {
     setError(null);
@@ -66,22 +54,26 @@ export default function RegisterPage() {
   };
 
   const handleRegister = async () => {
-    if (!commitment) return;
+    if (!commitment || !walletClient) return;
     setError(null);
     setStep('registering');
     try {
-      // Use eth_gasPrice (more reliable on Arbitrum than estimateFeesPerGas which can
-      // return stale EIP-1559 data) and apply 3× buffer + 100 Mwei floor.
-      const MIN_GAS = 100_000_000n; // 100 Mwei — always above Arbitrum Sepolia base fee
-      const raw = publicClient ? await publicClient.getGasPrice() : MIN_GAS;
-      const gasPrice = (raw * 3n) < MIN_GAS ? MIN_GAS : raw * 3n;
-      await writeContractAsync({
-        address: DEPLOYED_ADDRESSES.identityRegistry,
+      // Bypass wagmi's prepareTransactionRequest (which overwrites gas params with stale
+      // RPC data). Use walletClient.sendTransaction directly with a hardcoded 1 Gwei
+      // maxFeePerGas — well above Arbitrum Sepolia's ~0.02 Gwei base fee.
+      const data = encodeFunctionData({
         abi: IDENTITY_REGISTRY_ABI,
         functionName: 'register',
         args: [toBytes32(commitment)],
-        gasPrice,
       });
+      const hash = await walletClient.sendTransaction({
+        to: DEPLOYED_ADDRESSES.identityRegistry,
+        data,
+        gas: 300_000n,
+        maxFeePerGas: 1_000_000_000n,       // 1 Gwei
+        maxPriorityFeePerGas: 10_000_000n,  // 0.01 Gwei
+      });
+      setTxHash(hash);
     } catch (e: any) {
       setError((e as Error).message ?? 'Transaction rejected');
       setStep('generated');
