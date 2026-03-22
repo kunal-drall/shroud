@@ -23,7 +23,7 @@ interface CircleEntry {
 const DEMO_CIRCLES: CircleEntry[] = [
   {
     address: DEPLOYED_ADDRESSES.demoCircle,
-    circleId: '0x' + Buffer.from(keccak256(stringToBytes('shroud-demo-circle-1')).slice(2), 'hex').toString('hex'),
+    circleId: keccak256(stringToBytes('shroud-demo-circle-1')),
     memberCount: 5,
     contributionAmount: '0.01',
     state: CircleState.JOINING,
@@ -40,7 +40,6 @@ const DEMO_PUBKEY_Y = BigInt('0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A6855419
 function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => void }) {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const router = useRouter();
   const [form, setForm] = useState({
     memberCount:        '5',
     contributionAmount: '0.01',
