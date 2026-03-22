@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useWalletClient, usePublicClient } from 'wagmi';
 import { parseEther, keccak256, stringToBytes, encodeAbiParameters } from 'viem';
@@ -17,6 +17,21 @@ interface CircleEntry {
   contributionAmount: string;
   state: CircleState;
   joined: number;
+}
+
+// ── LocalStorage persistence ──────────────────────────────────────────────────
+
+const CIRCLES_STORAGE_KEY = 'shroud:circles';
+
+function persistCircles(circles: CircleEntry[]): void {
+  try { localStorage.setItem(CIRCLES_STORAGE_KEY, JSON.stringify(circles)); } catch {}
+}
+
+function loadPersistedCircles(): CircleEntry[] {
+  try {
+    const raw = localStorage.getItem(CIRCLES_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as CircleEntry[]) : [];
+  } catch { return []; }
 }
 
 // Demo circles — in production these would be fetched from events
@@ -234,10 +249,24 @@ export default function CirclesPage() {
   const [showCreate, setShowCreate]     = useState(false);
   const [userCircles, setUserCircles]   = useState<CircleEntry[]>([]);
 
-  const allCircles = [...DEMO_CIRCLES, ...userCircles];
+  // Load persisted circles on mount (client-only)
+  useEffect(() => {
+    setUserCircles(loadPersistedCircles());
+  }, []);
+
+  // Deduplicate against DEMO_CIRCLES by address
+  const demoAddrs = new Set(DEMO_CIRCLES.map(c => c.address.toLowerCase()));
+  const allCircles = [
+    ...DEMO_CIRCLES,
+    ...userCircles.filter(c => !demoAddrs.has(c.address.toLowerCase())),
+  ];
 
   const handleCircleCreated = (entry: CircleEntry) => {
-    setUserCircles(prev => [...prev, entry]);
+    setUserCircles(prev => {
+      const updated = [...prev, entry];
+      persistCircles(updated);
+      return updated;
+    });
     setShowCreate(false);
   };
 
