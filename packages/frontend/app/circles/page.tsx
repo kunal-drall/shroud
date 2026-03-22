@@ -7,6 +7,8 @@ import { parseEther, keccak256, stringToBytes, encodeAbiParameters } from 'viem'
 import { Nav } from '@/components/Nav';
 import { DEPLOYED_ADDRESSES, ROSCA_CIRCLE_BYTECODE, CircleState, STATE_LABELS } from '@/lib/contracts';
 import { truncateHex } from '@/lib/crypto';
+import { supabase } from '@/lib/supabase';
+import type { CircleRow } from '@/lib/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,36 +21,31 @@ interface CircleEntry {
   joined: number;
 }
 
-// ── LocalStorage persistence ──────────────────────────────────────────────────
-
-const CIRCLES_STORAGE_KEY = 'shroud:circles';
-
-function persistCircles(circles: CircleEntry[]): void {
-  try { localStorage.setItem(CIRCLES_STORAGE_KEY, JSON.stringify(circles)); } catch {}
+function rowToEntry(r: CircleRow): CircleEntry {
+  return {
+    address:            r.address,
+    circleId:           r.circle_id,
+    memberCount:        r.member_count,
+    contributionAmount: r.contribution_amount,
+    state:              r.state as CircleState,
+    joined:             r.joined,
+  };
 }
 
-function loadPersistedCircles(): CircleEntry[] {
-  try {
-    const raw = localStorage.getItem(CIRCLES_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as CircleEntry[]) : [];
-  } catch { return []; }
-}
-
-// Demo circles — in production these would be fetched from events
+// Demo circles — always shown regardless of DB
 const DEMO_CIRCLES: CircleEntry[] = [
   {
-    address: DEPLOYED_ADDRESSES.demoCircle,
-    circleId: keccak256(stringToBytes('shroud-demo-circle-1')),
-    memberCount: 5,
+    address:            DEPLOYED_ADDRESSES.demoCircle,
+    circleId:           keccak256(stringToBytes('shroud-demo-circle-1')),
+    memberCount:        5,
     contributionAmount: '0.01',
-    state: CircleState.JOINING,
-    joined: 0,
+    state:              CircleState.JOINING,
+    joined:             0,
   },
 ];
 
 // ── Create form ───────────────────────────────────────────────────────────────
 
-// secp256k1 generator point — same demo FROST key used in Deploy.s.sol
 const DEMO_PUBKEY_X = BigInt('0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798');
 const DEMO_PUBKEY_Y = BigInt('0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8');
 
@@ -62,7 +59,7 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
     name:               'My Circle',
   });
   const [status, setStatus] = useState<'idle' | 'deploying' | 'mining' | 'done'>('idle');
-  const [deployed, setDeployed] = useState<string | null>(null); // contract address
+  const [deployed, setDeployed] = useState<string | null>(null);
   const [error, setError]   = useState<string | null>(null);
 
   const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -78,26 +75,16 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
       const roundDurationSecs = BigInt(parseInt(form.roundDurationDays) * 86400);
       const circleId          = BigInt(keccak256(stringToBytes(form.name + Date.now())));
 
-      // Fetch the current Merkle root from IdentityRegistry so new members can join
-      const rootResp = await fetch(
-        `https://sepolia-rollup.arbitrum.io/rpc`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0', id: 1, method: 'eth_call',
-            params: [{
-              to: DEPLOYED_ADDRESSES.identityRegistry,
-              data: '0x49590657', // getMerkleRoot() selector
-            }, 'latest'],
-          }),
-        }
-      );
-      const rootJson  = await rootResp.json();
-      const merkleRoot = (rootJson.result ?? '0x' + '0'.repeat(64)) as `0x${string}`;
+      const rootResp = await fetch('https://sepolia-rollup.arbitrum.io/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'eth_call',
+          params: [{ to: DEPLOYED_ADDRESSES.identityRegistry, data: '0x49590657' }, 'latest'],
+        }),
+      });
+      const merkleRoot = ((await rootResp.json()).result ?? ('0x' + '0'.repeat(64))) as `0x${string}`;
 
-      // Encode constructor args: (verifier, frostVerifier, memberCount, contributionWei,
-      //   roundDuration, merkleRoot, circleId, pubKeyX, pubKeyY)
       const constructorArgs = encodeAbiParameters(
         [
           { type: 'address' }, { type: 'address' },
@@ -108,26 +95,20 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
         [
           DEPLOYED_ADDRESSES.membershipVerifier,
           DEPLOYED_ADDRESSES.frostVerifier,
-          memberCount,
-          contributionWei,
-          roundDurationSecs,
-          merkleRoot as `0x${string}`,
-          circleId,
-          DEMO_PUBKEY_X,
-          DEMO_PUBKEY_Y,
+          memberCount, contributionWei, roundDurationSecs,
+          merkleRoot, circleId,
+          DEMO_PUBKEY_X, DEMO_PUBKEY_Y,
         ]
       );
 
       const initcode = (ROSCA_CIRCLE_BYTECODE + constructorArgs.slice(2)) as `0x${string}`;
       const hash = await walletClient.sendTransaction({
-        data:               initcode,
-        gas:                2_000_000n,
-        maxFeePerGas:       1_000_000_000n,
-        maxPriorityFeePerGas: 10_000_000n,
+        data: initcode, gas: 2_000_000n,
+        maxFeePerGas: 1_000_000_000n, maxPriorityFeePerGas: 10_000_000n,
       });
 
       setStatus('mining');
-      if (!publicClient) throw new Error('No RPC client available — refresh and try again');
+      if (!publicClient) throw new Error('No RPC client — refresh and try again');
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       const contractAddress = receipt.contractAddress;
       if (!contractAddress) throw new Error('No contract address in receipt');
@@ -140,6 +121,18 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
         state:              CircleState.JOINING,
         joined:             0,
       };
+
+      // Persist to Supabase
+      if (supabase) {
+        await supabase.from('circles').upsert({
+          address:             entry.address,
+          circle_id:           entry.circleId,
+          member_count:        entry.memberCount,
+          contribution_amount: entry.contributionAmount,
+          state:               entry.state,
+          joined:              entry.joined,
+        });
+      }
 
       setDeployed(contractAddress);
       setStatus('done');
@@ -166,10 +159,7 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
             <span className="data-label">Contract</span>
             <span className="font-mono text-xs text-text">{truncateHex(deployed, 8)}</span>
           </div>
-          <Link
-            href={`/circles/${deployed}`}
-            className="btn-primary w-full text-center block text-xs"
-          >
+          <Link href={`/circles/${deployed}`} className="btn-primary w-full text-center block text-xs">
             View Circle →
           </Link>
         </div>
@@ -178,8 +168,7 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
           <div className="space-y-3">
             <div>
               <label className="data-label block mb-1">Circle Name</label>
-              <input className="input-field" type="text"
-                value={form.name} onChange={set('name')} />
+              <input className="input-field" type="text" value={form.name} onChange={set('name')} />
             </div>
             <div>
               <label className="data-label block mb-1">Member Count</label>
@@ -246,27 +235,32 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CirclesPage() {
-  const [showCreate, setShowCreate]     = useState(false);
-  const [userCircles, setUserCircles]   = useState<CircleEntry[]>([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [dbCircles, setDbCircles]   = useState<CircleEntry[]>([]);
+  const [loading, setLoading]       = useState(true);
 
-  // Load persisted circles on mount (client-only)
+  // Load circles from Supabase on mount
   useEffect(() => {
-    setUserCircles(loadPersistedCircles());
+    if (!supabase) { setLoading(false); return; }
+    supabase
+      .from('circles')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (data) setDbCircles(data.map(rowToEntry));
+        setLoading(false);
+      });
   }, []);
 
   // Deduplicate against DEMO_CIRCLES by address
   const demoAddrs = new Set(DEMO_CIRCLES.map(c => c.address.toLowerCase()));
   const allCircles = [
     ...DEMO_CIRCLES,
-    ...userCircles.filter(c => !demoAddrs.has(c.address.toLowerCase())),
+    ...dbCircles.filter(c => !demoAddrs.has(c.address.toLowerCase())),
   ];
 
   const handleCircleCreated = (entry: CircleEntry) => {
-    setUserCircles(prev => {
-      const updated = [...prev, entry];
-      persistCircles(updated);
-      return updated;
-    });
+    setDbCircles(prev => [entry, ...prev]);
     setShowCreate(false);
   };
 
@@ -288,18 +282,20 @@ export default function CirclesPage() {
 
         <div className="grid sm:grid-cols-[1fr_300px] gap-8">
 
-          {/* ── Table ─────────────────────────────────────────────────── */}
+          {/* ── Table ──────────────────────────────────────────────── */}
           <div className="animate-fade-up-d1">
-
-            {/* Column headers */}
             <div className="grid grid-cols-[1fr_80px_80px_80px_80px] gap-2 px-3 pb-2 border-b border-border">
               {['Circle', 'Members', 'Contribution', 'State', ''].map(h => (
                 <div key={h} className="data-label">{h}</div>
               ))}
             </div>
 
-            {/* Rows */}
-            {allCircles.length === 0 ? (
+            {loading ? (
+              <div className="py-8 flex items-center gap-3 px-3">
+                <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <span className="text-sm text-muted">Loading circles…</span>
+              </div>
+            ) : allCircles.length === 0 ? (
               <div className="py-16 text-center">
                 <p className="text-sm text-muted">No circles yet.</p>
                 <button className="btn-ghost text-xs mt-3" onClick={() => setShowCreate(true)}>
@@ -318,12 +314,8 @@ export default function CirclesPage() {
                       id: {truncateHex(c.circleId, 4)}
                     </div>
                   </div>
-                  <div className="font-mono text-xs text-muted">
-                    {c.joined}/{c.memberCount}
-                  </div>
-                  <div className="font-mono text-xs text-muted">
-                    {c.contributionAmount} ETH
-                  </div>
+                  <div className="font-mono text-xs text-muted">{c.joined}/{c.memberCount}</div>
+                  <div className="font-mono text-xs text-muted">{c.contributionAmount} ETH</div>
                   <div>
                     <span className={`badge ${
                       c.state === CircleState.JOINING   ? 'badge-joining'   :
@@ -334,24 +326,16 @@ export default function CirclesPage() {
                     </span>
                   </div>
                   <div>
-                    <Link
-                      href={`/circles/${c.address}`}
-                      className="btn-ghost text-[11px] py-1 px-2"
-                    >
+                    <Link href={`/circles/${c.address}`} className="btn-ghost text-[11px] py-1 px-2">
                       View →
                     </Link>
                   </div>
                 </div>
               ))
             )}
-
-            {/* Hint about fetching circles from events */}
-            <p className="text-xs text-muted/50 mt-4 font-mono">
-              In production, circles are indexed from ROSCACircle deployment events.
-            </p>
           </div>
 
-          {/* ── Sidebar: create form or info ──────────────────────────── */}
+          {/* ── Sidebar ────────────────────────────────────────────── */}
           <aside className="space-y-4 animate-fade-up-d2">
             {showCreate ? (
               <CreateCircleForm onCreated={handleCircleCreated} />
@@ -362,10 +346,12 @@ export default function CirclesPage() {
                 </h3>
                 <div className="space-y-2 text-xs text-muted leading-relaxed">
                   <p>
-                    Each circle is an independent ROSCACircle contract with its own membership Merkle root, contribution amount, and round schedule.
+                    Each circle is an independent ROSCACircle contract with its own membership Merkle root,
+                    contribution amount, and round schedule.
                   </p>
                   <p>
-                    Joining requires a ZK proof of identity. Your membership in one circle is cryptographically unlinkable from your membership in another.
+                    Joining requires a ZK proof of identity. Your membership in one circle is
+                    cryptographically unlinkable from your membership in another.
                   </p>
                 </div>
                 <div className="space-y-1 pt-1">
