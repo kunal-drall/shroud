@@ -112,7 +112,8 @@ function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => vo
       });
 
       setStatus('mining');
-      const receipt = await publicClient!.waitForTransactionReceipt({ hash });
+      if (!publicClient) throw new Error('No RPC client available — refresh and try again');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
       const contractAddress = receipt.contractAddress;
       if (!contractAddress) throw new Error('No contract address in receipt');
 
