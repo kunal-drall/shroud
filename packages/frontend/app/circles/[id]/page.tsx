@@ -2,18 +2,19 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
-import { parseEther, formatEther } from 'viem';
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from 'wagmi';
+import { formatEther, parseAbiItem } from 'viem';
 import { Nav } from '@/components/Nav';
 import { CircleStatus } from '@/components/CircleStatus';
 import { ProofGenerator } from '@/components/ProofGenerator';
 import { NullifierDisplay } from '@/components/NullifierDisplay';
-import { ROSCA_CIRCLE_ABI, CircleState, STATE_LABELS } from '@/lib/contracts';
+import { ROSCA_CIRCLE_ABI, CircleState, STATE_LABELS, DEPLOYED_ADDRESSES } from '@/lib/contracts';
 import {
   loadMskLocally,
   savePseudonym,
   loadPseudonym,
-  deriveNullifier,
+  computeCommitment,
+  buildMerkleTree,
   toBytes32,
   truncateHex,
 } from '@/lib/crypto';
@@ -40,12 +41,60 @@ function JoinPanel({
   onJoined: (pseudonym: string, nullifier: string) => void;
 }) {
   const { isConnected } = useAccount();
-  const [proof, setProof]             = useState<ProofResult | null>(null);
-  const [pseudonym, setPseudonym]     = useState('');
-  const [nullifier, setNullifier]     = useState('');
-  const [error, setError]             = useState<string | null>(null);
+  const publicClient = usePublicClient();
+  const [proof, setProof]               = useState<ProofResult | null>(null);
+  const [pseudonym, setPseudonym]       = useState('');
+  const [nullifier, setNullifier]       = useState('');
+  const [error, setError]               = useState<string | null>(null);
+
+  // Registry tree state
+  const [leaves, setLeaves]             = useState<bigint[]>([]);
+  const [userLeafIndex, setUserLeafIdx] = useState<number>(-1);
+  const [leavesRoot, setLeavesRoot]     = useState<bigint>(0n);
+  const [loadingTree, setLoadingTree]   = useState(true);
+  const [treeError, setTreeError]       = useState<string | null>(null);
 
   const localKey = typeof window !== 'undefined' ? loadMskLocally() : null;
+
+  // Fetch all IdentityRegistered events to build the real leaves array
+  useEffect(() => {
+    if (!publicClient || !localKey) { setLoadingTree(false); return; }
+    (async () => {
+      setLoadingTree(true);
+      setTreeError(null);
+      try {
+        const logs = await publicClient.getLogs({
+          address: DEPLOYED_ADDRESSES.identityRegistry,
+          event: parseAbiItem('event IdentityRegistered(bytes32 indexed commitment, uint256 leafIndex, bytes32 newRoot)'),
+          fromBlock: 0n,
+          toBlock: 'latest',
+        });
+
+        const sorted = [...logs].sort((a, b) =>
+          Number((a.args as any).leafIndex) - Number((b.args as any).leafIndex)
+        );
+        const leavesArr = sorted.map(log => BigInt((log.args as any).commitment));
+        setLeaves(leavesArr);
+
+        // Find user's commitment in the tree
+        const userCommitment = await computeCommitment(localKey.msk);
+        const userHex = toBytes32(userCommitment);
+        const idx = sorted.findIndex(log => (log.args as any).commitment === userHex);
+        setUserLeafIdx(idx);
+
+        // Compute the Merkle root from the actual leaves
+        if (leavesArr.length > 0) {
+          const { root } = await buildMerkleTree(leavesArr);
+          setLeavesRoot(root);
+        }
+      } catch (e: any) {
+        setTreeError(e?.message ?? 'Failed to load registry data');
+      } finally {
+        setLoadingTree(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Derive nullifier when proof is ready
   useEffect(() => {
@@ -67,19 +116,18 @@ function JoinPanel({
   const handleJoin = async () => {
     if (!proof) return;
     setError(null);
-    const ps = '0x' + Math.floor(Math.random() * 1e15).toString(16).padStart(64, '0') as `0x${string}`;
+    const ps = ('0x' + Math.floor(Math.random() * 1e15).toString(16).padStart(64, '0')) as `0x${string}`;
     setPseudonym(ps);
-
     try {
       writeContract({
         address: circleAddress,
         abi: ROSCA_CIRCLE_ABI,
         functionName: 'joinCircle',
         args: [
-          proof.pA as [bigint, bigint],
-          proof.pB as [[bigint, bigint], [bigint, bigint]],
-          proof.pC as [bigint, bigint],
-          proof.pubSignals as [bigint, bigint, bigint],
+          proof.pA as unknown as [bigint, bigint],
+          proof.pB as unknown as [[bigint, bigint], [bigint, bigint]],
+          proof.pC as unknown as [bigint, bigint],
+          proof.pubSignals as unknown as [bigint, bigint, bigint],
           ps,
         ],
       });
@@ -99,6 +147,39 @@ function JoinPanel({
     );
   }
 
+  if (loadingTree) {
+    return (
+      <div className="panel">
+        <div className="flex items-center gap-3 py-3">
+          <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-sm text-muted">Loading identity registry…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (treeError) {
+    return (
+      <div className="panel">
+        <p className="text-xs text-danger">Registry error: {treeError}</p>
+      </div>
+    );
+  }
+
+  if (userLeafIndex === -1) {
+    return (
+      <div className="panel">
+        <p className="text-sm text-muted">
+          Your commitment was not found in the identity registry.{' '}
+          <a href="/register" className="text-accent underline">Register your identity first →</a>
+        </p>
+      </div>
+    );
+  }
+
+  // Circle was deployed before the user registered — roots don't match
+  const circleRootMismatch = leaves.length > 0 && leavesRoot !== merkleRoot;
+
   return (
     <div className="space-y-4">
       <div className="panel">
@@ -108,18 +189,32 @@ function JoinPanel({
           in the identity Merkle tree without revealing which leaf.
         </p>
 
-        <ProofGenerator
-          msk={localKey.msk}
-          merkleRoot={merkleRoot}
-          circleId={circleId}
-          leaves={[/* populated from registry events in production */]}
-          leafIndex={localKey.leafIndex}
-          onProofGenerated={setProof}
-          disabled={!isConnected}
-        />
+        {circleRootMismatch ? (
+          <div className="p-3 bg-warn/10 border border-warn/30 rounded text-xs text-warn leading-relaxed space-y-2">
+            <p className="font-medium">Merkle root mismatch</p>
+            <p>
+              This circle was deployed before your identity was registered.
+              Its stored Merkle root does not include your commitment.
+            </p>
+            <p>
+              <a href="/circles" className="underline font-medium">Create a new circle →</a>
+              {' '}New circles capture the current registry root automatically.
+            </p>
+          </div>
+        ) : (
+          <ProofGenerator
+            msk={localKey.msk}
+            merkleRoot={merkleRoot}
+            circleId={circleId}
+            leaves={leaves}
+            leafIndex={userLeafIndex}
+            onProofGenerated={setProof}
+            disabled={!isConnected}
+          />
+        )}
       </div>
 
-      {proof && (
+      {proof && !circleRootMismatch && (
         <div className="panel space-y-4">
           <h3 className="font-display font-semibold text-sm text-text">Submit Proof</h3>
 
@@ -133,12 +228,12 @@ function JoinPanel({
           {isMining && (
             <div className="flex items-center gap-3 py-2">
               <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-muted">Transaction mining...</span>
+              <span className="text-sm text-muted">Transaction mining…</span>
             </div>
           )}
           {isSuccess && (
             <div className="flex items-center gap-2 p-2.5 bg-accent/10 border border-accent/30 rounded text-xs text-accent font-medium">
-              <span>✓</span> Successfully joined. Waiting for other members...
+              <span>✓</span> Successfully joined. Waiting for other members…
             </div>
           )}
           {error && (
