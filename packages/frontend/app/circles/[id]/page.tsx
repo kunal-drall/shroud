@@ -63,10 +63,11 @@ function JoinPanel({
       setLoadingTree(true);
       setTreeError(null);
       try {
+        // fromBlock: shortly before IdentityRegistry deployment (~10491459) on Arbitrum Sepolia
         const logs = await publicClient.getLogs({
           address: DEPLOYED_ADDRESSES.identityRegistry,
           event: parseAbiItem('event IdentityRegistered(bytes32 indexed commitment, uint256 leafIndex, bytes32 newRoot)'),
-          fromBlock: 0n,
+          fromBlock: BigInt(10_400_000),
           toBlock: 'latest',
         });
 
@@ -93,8 +94,7 @@ function JoinPanel({
         setLoadingTree(false);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [publicClient]); // re-run when wagmi hydrates and publicClient becomes available
 
   // Derive nullifier when proof is ready
   useEffect(() => {
