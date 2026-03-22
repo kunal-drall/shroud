@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useWalletClient } from 'wagmi';
+import { useWalletClient, usePublicClient } from 'wagmi';
 import { parseEther, keccak256, stringToBytes, encodeAbiParameters } from 'viem';
 import { Nav } from '@/components/Nav';
 import { DEPLOYED_ADDRESSES, ROSCA_CIRCLE_BYTECODE, CircleState, STATE_LABELS } from '@/lib/contracts';
@@ -37,16 +37,18 @@ const DEMO_CIRCLES: CircleEntry[] = [
 const DEMO_PUBKEY_X = BigInt('0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798');
 const DEMO_PUBKEY_Y = BigInt('0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8');
 
-function CreateCircleForm({ onCreated }: { onCreated: (addr: string) => void }) {
+function CreateCircleForm({ onCreated }: { onCreated: (entry: CircleEntry) => void }) {
   const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
+  const router = useRouter();
   const [form, setForm] = useState({
     memberCount:        '5',
     contributionAmount: '0.01',
     roundDurationDays:  '7',
     name:               'My Circle',
   });
-  const [status, setStatus] = useState<'idle' | 'deploying' | 'done'>('idle');
-  const [deployed, setDeployed] = useState<string | null>(null);
+  const [status, setStatus] = useState<'idle' | 'deploying' | 'mining' | 'done'>('idle');
+  const [deployed, setDeployed] = useState<string | null>(null); // contract address
   const [error, setError]   = useState<string | null>(null);
 
   const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -110,11 +112,23 @@ function CreateCircleForm({ onCreated }: { onCreated: (addr: string) => void }) 
         maxPriorityFeePerGas: 10_000_000n,
       });
 
-      // Derive deployed address: keccak256(rlp([sender, nonce]))[12:]
-      // Simplest: just show the tx hash and let user find the address on explorer
-      setDeployed(hash);
+      setStatus('mining');
+      const receipt = await publicClient!.waitForTransactionReceipt({ hash });
+      const contractAddress = receipt.contractAddress;
+      if (!contractAddress) throw new Error('No contract address in receipt');
+
+      const entry: CircleEntry = {
+        address:            contractAddress,
+        circleId:           '0x' + circleId.toString(16).padStart(64, '0'),
+        memberCount:        Number(memberCount),
+        contributionAmount: form.contributionAmount,
+        state:              CircleState.JOINING,
+        joined:             0,
+      };
+
+      setDeployed(contractAddress);
       setStatus('done');
-      onCreated(hash);
+      onCreated(entry);
     } catch (e: any) {
       setError((e as Error).message ?? 'Deployment failed');
       setStatus('idle');
@@ -129,14 +143,20 @@ function CreateCircleForm({ onCreated }: { onCreated: (addr: string) => void }) 
       </p>
 
       {status === 'done' && deployed ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center gap-2 p-2.5 bg-accent/10 border border-accent/30 rounded text-xs text-accent font-medium">
             <span>✓</span> Circle deployed
           </div>
-          <div className="font-mono text-xs text-muted break-all">
-            Deploy tx: {truncateHex(deployed, 8)}
+          <div className="data-row">
+            <span className="data-label">Contract</span>
+            <span className="font-mono text-xs text-text">{truncateHex(deployed, 8)}</span>
           </div>
-          <p className="text-xs text-muted">Find your circle address on <a className="text-accent underline" href={`https://sepolia.arbiscan.io/tx/${deployed}`} target="_blank" rel="noreferrer">Arbiscan</a>.</p>
+          <Link
+            href={`/circles/${deployed}`}
+            className="btn-primary w-full text-center block text-xs"
+          >
+            View Circle →
+          </Link>
         </div>
       ) : (
         <>
@@ -188,12 +208,17 @@ function CreateCircleForm({ onCreated }: { onCreated: (addr: string) => void }) 
           <button
             className="btn-primary w-full"
             onClick={handleCreate}
-            disabled={status === 'deploying' || !walletClient}
+            disabled={status === 'deploying' || status === 'mining' || !walletClient}
           >
             {status === 'deploying' ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Deploying…
+                Awaiting signature…
+              </span>
+            ) : status === 'mining' ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                Mining…
               </span>
             ) : walletClient ? 'Deploy Circle' : 'Connect wallet first'}
           </button>
@@ -206,7 +231,15 @@ function CreateCircleForm({ onCreated }: { onCreated: (addr: string) => void }) 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CirclesPage() {
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate]     = useState(false);
+  const [userCircles, setUserCircles]   = useState<CircleEntry[]>([]);
+
+  const allCircles = [...DEMO_CIRCLES, ...userCircles];
+
+  const handleCircleCreated = (entry: CircleEntry) => {
+    setUserCircles(prev => [...prev, entry]);
+    setShowCreate(false);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -237,7 +270,7 @@ export default function CirclesPage() {
             </div>
 
             {/* Rows */}
-            {DEMO_CIRCLES.length === 0 ? (
+            {allCircles.length === 0 ? (
               <div className="py-16 text-center">
                 <p className="text-sm text-muted">No circles yet.</p>
                 <button className="btn-ghost text-xs mt-3" onClick={() => setShowCreate(true)}>
@@ -245,7 +278,7 @@ export default function CirclesPage() {
                 </button>
               </div>
             ) : (
-              DEMO_CIRCLES.map((c) => (
+              allCircles.map((c) => (
                 <div
                   key={c.address}
                   className="grid grid-cols-[1fr_80px_80px_80px_80px] gap-2 px-3 py-3 border-b border-border/50 hover:bg-highlight transition-colors items-center"
@@ -292,7 +325,7 @@ export default function CirclesPage() {
           {/* ── Sidebar: create form or info ──────────────────────────── */}
           <aside className="space-y-4 animate-fade-up-d2">
             {showCreate ? (
-              <CreateCircleForm onCreated={() => setShowCreate(false)} />
+              <CreateCircleForm onCreated={handleCircleCreated} />
             ) : (
               <div className="panel space-y-3">
                 <h3 className="font-display font-semibold text-xs text-muted uppercase tracking-widest">
